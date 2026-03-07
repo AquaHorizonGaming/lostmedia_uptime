@@ -25,10 +25,19 @@ function installCacheMock(store: CacheStore) {
   return open;
 }
 
-async function requestPublic(path: string, handlers: FakeD1QueryHandler[]) {
-  const env = { DB: createFakeD1Database(handlers) } as unknown as Env;
+async function requestPublic(
+  path: string,
+  handlers: FakeD1QueryHandler[],
+  opts: { adminToken?: string; authorization?: string } = {},
+) {
+  const env = {
+    DB: createFakeD1Database(handlers),
+    ADMIN_TOKEN: opts.adminToken ?? 'test-admin-token',
+  } as unknown as Env;
   const res = await publicRoutes.fetch(
-    new Request(`https://status.example.com${path}`),
+    new Request(`https://status.example.com${path}`, {
+      headers: opts.authorization ? { Authorization: opts.authorization } : undefined,
+    }),
     env,
     { waitUntil: vi.fn() } as unknown as ExecutionContext,
   );
@@ -161,6 +170,53 @@ describe('public routes uptime regression', () => {
           downtime_sec: 300,
         },
       ],
+    });
+  });
+
+  it('serves hidden monitor uptime to authorized admins with private cache headers', async () => {
+    const rangeEnd = 1_728_000_000;
+    const rangeStart = rangeEnd - 86_400;
+
+    vi.spyOn(Date, 'now').mockReturnValue(rangeEnd * 1000 + 5_000);
+
+    const handlers: FakeD1QueryHandler[] = [
+      {
+        match: (sql) => sql.includes('from monitors m') && sql.includes('and 1 = 1'),
+        first: () => ({
+          id: 77,
+          name: 'Private Admin API',
+          interval_sec: 60,
+          created_at: rangeStart - 10 * 86_400,
+          last_checked_at: rangeEnd - 30,
+        }),
+      },
+      {
+        match: 'from check_results',
+        all: () => [
+          { checked_at: rangeStart - 60, status: 'up' },
+          { checked_at: rangeEnd - 60, status: 'up' },
+        ],
+      },
+      {
+        match: 'from outages',
+        all: () => [],
+      },
+    ];
+
+    const { res, body } = await requestPublic('/monitors/77/uptime?range=24h', handlers, {
+      adminToken: 'secret-token',
+      authorization: 'Bearer secret-token',
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get('Cache-Control')).toBe('private, no-store');
+    expect(res.headers.get('Vary')).toContain('Authorization');
+    expect(body).toMatchObject({
+      monitor: { id: 77, name: 'Private Admin API' },
+      range_start_at: rangeStart,
+      range_end_at: rangeEnd,
+      total_sec: 86_400,
+      downtime_sec: 0,
     });
   });
 });
