@@ -1,7 +1,6 @@
 <div align="center">
 
 # Uptimer
-
 **Serverless uptime monitoring & status page on Cloudflare's edge network**
 
 [![CI](https://github.com/VrianCao/Uptimer/actions/workflows/ci.yml/badge.svg)](https://github.com/VrianCao/Uptimer/actions/workflows/ci.yml)
